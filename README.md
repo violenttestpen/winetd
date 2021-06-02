@@ -5,7 +5,7 @@
 # Installation
 
 ```
-go get github.com/violenttestpen/ginetd
+go install github.com/violenttestpen/ginetd
 ```
 
 # Usage
