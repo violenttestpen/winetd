@@ -7,25 +7,47 @@ import (
 	"log"
 	"net"
 	"os/exec"
-	"runtime"
+	"syscall"
 )
 
-func main() {
-	bind := flag.String("bind", "0.0.0.0", "Address to bind to")
-	port := flag.Int("port", 8080, "Port number to bind to")
-	service := flag.String("server", "", "Path to service to be daemonized")
-	username := flag.String("user", "", "The user to run the service as")
-	password := flag.String("pass", "", "The password of the user")
-	verbosity := flag.Int("verbosity", 0, "Verbosity mode (0-2)")
-	flag.Parse()
+const integrityUsage = "Run service with assigned integrity level: %v"
 
-	if err := beginListener(fmt.Sprintf("%s:%d", *bind, *port),
-		*service, *username, *password, *verbosity); err != nil {
+var (
+	bind      = "0.0.0.0"
+	port      = 8080
+	integrity = "Untrusted"
+	verbosity = 0
+
+	service string
+)
+
+func init() {
+	i, integrityLevels := 0, make([]string, len(sidWinIntegrityLevels))
+	for k := range sidWinIntegrityLevels {
+		integrityLevels[i] = k
+		i++
+	}
+
+	flag.StringVar(&bind, "bind", bind, "Address to bind to")
+	flag.IntVar(&port, "port", port, "Port number to bind to")
+	flag.StringVar(&integrity, "integrity", integrity, fmt.Sprintf(integrityUsage, integrityLevels))
+	flag.IntVar(&verbosity, "verbosity", verbosity, "Verbosity mode (0-2)")
+	flag.StringVar(&service, "server", service, "Path to service to be daemonized")
+	flag.Parse()
+}
+
+func main() {
+	sid, ok := sidWinIntegrityLevels[integrity]
+	if !ok {
+		log.Fatal("Invalid Integrity Level")
+	}
+
+	if err := beginListener(fmt.Sprintf("%s:%d", bind, port), service, sid, verbosity); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func beginListener(bind, service, username, password string, verbosity int) error {
+func beginListener(bind, service, sid string, verbosity int) error {
 	server, err := net.Listen("tcp", bind)
 	if err != nil {
 		return err
@@ -40,32 +62,28 @@ func beginListener(bind, service, username, password string, verbosity int) erro
 		if verbosity >= 1 {
 			log.Printf("New connection from %v\n", conn.RemoteAddr())
 		}
-		go handleConn(service, username, password, conn, verbosity)
+		go handleConn(service, sid, conn, verbosity)
 	}
 }
 
-func handleConn(service, username, password string, conn net.Conn, verbosity int) {
+func handleConn(service, sid string, conn net.Conn, verbosity int) {
 	defer conn.Close()
+
+	token, err := getIntegrityLevelToken(sid)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer token.Close()
+
 	cmd := exec.Command(service)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Token: token}
 	cmd.Stdout = conn
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		log.Println(err)
 		return
-	}
-
-	if len(username) > 0 {
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-		err := impersonate(username, password)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer mustRevertToSelf()
-		if verbosity >= 2 {
-			log.Printf("Impersonated as user %s\n", username)
-		}
 	}
 
 	go func(w io.Writer, r io.Reader) {

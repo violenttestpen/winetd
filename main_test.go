@@ -9,17 +9,15 @@ import (
 )
 
 const (
-	BIND     = "127.0.0.1:8080"
-	SERVICE  = "./servers/echo.exe"
-	USERNAME = ""
-	PASSWORD = ""
+	BIND    = "127.0.0.1:8080"
+	SERVICE = "./servers/echo.exe"
 )
 
 var listenerIsLoaded = false
 
 func simulateListener() {
 	if !listenerIsLoaded {
-		go beginListener(BIND, SERVICE, USERNAME, PASSWORD, 0)
+		go beginListener(BIND, SERVICE, sidWinIntegrityLevels["Untrusted"], 0)
 		conn, err := net.Dial("tcp", BIND)
 		if err != nil {
 			log.Fatal("Unable to connect to listener")
