@@ -14,14 +14,12 @@ go install github.com/violenttestpen/ginetd
 Usage of ginetd.exe:
   -bind string
         Address to bind to (default "0.0.0.0")
-  -pass string
-        The password of the user
+  -integrity string
+        Run service with assigned integrity level: [Untrusted Low] (default "Untrusted")
   -port int
         Port number to bind to (default 8080)
   -server string
         Path to service to be daemonized
-  -user string
-        The user to run the service as
   -verbosity int
         Verbosity mode (0-2)
 ```
