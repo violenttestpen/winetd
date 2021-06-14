@@ -91,7 +91,7 @@ func handleConn(service, sid string, conn net.Conn, verbosity int) {
 			log.Println(err)
 		}
 
-		if cmd.Process != nil {
+		if cmd.Process != nil && !cmd.ProcessState.Exited() {
 			if err := cmd.Process.Kill(); verbosity >= 2 && err != nil {
 				log.Println(err)
 			}
