@@ -54,7 +54,7 @@ func main() {
 	}
 }
 
-func beginListener(bind, service, sid string, verbosity int) error {
+func beginListener(bind, service string, sid uint32, verbosity int) error {
 	server, err := net.Listen("tcp", bind)
 	if err != nil {
 		return err
@@ -77,7 +77,7 @@ func beginListener(bind, service, sid string, verbosity int) error {
 	}
 }
 
-func handleConn(service, sid string, conn net.Conn, verbosity int) error {
+func handleConn(service string, sid uint32, conn net.Conn, verbosity int) error {
 	defer conn.Close()
 
 	token, err := getIntegrityLevelToken(sid)
@@ -112,7 +112,7 @@ func handleConn(service, sid string, conn net.Conn, verbosity int) error {
 		return err
 	}
 
-	go func(job windows.Handle, w io.Writer, r io.Reader) {
+	go func(w io.Writer, r io.Reader) {
 		if _, err := io.Copy(w, r); verbosity >= 2 && err != nil {
 			log.Println(err)
 		}
@@ -126,7 +126,7 @@ func handleConn(service, sid string, conn net.Conn, verbosity int) error {
 				log.Println(err)
 			}
 		}
-	}(job, stdin, conn)
+	}(stdin, conn)
 
 	if verbosity >= 1 {
 		log.Printf("Started service \"%s\" with pid %d\n", service, cmd.Process.Pid)
