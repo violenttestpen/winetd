@@ -14,7 +14,7 @@ GOBENCH = $(GOTEST) -bench=.
 
 BUILDFLAGS = -ldflags="-s -w"
 
-SRC_FILES = main.go impersonate.go
+SRC_FILES = .
 DIST_DIRNAME = ./dist
 DIST_FILENAME = ./ginetd.exe
 
@@ -30,10 +30,10 @@ services:
 	$(CC) -o $(SVC_DIRNAME)/$(SVC_DIST_FILENAME) $(CCFLAGS) $(SVC_DIRNAME)/$(SVC_FILENAME)
 
 run:
-	$(GORUN) $(SRC_FILES) -server $(SVC_DIRNAME)/$(SVC_DIST_FILENAME) -verbosity 1
+	$(GORUN) $(SRC_FILES) -server $(SVC_DIRNAME)/$(SVC_DIST_FILENAME) -verbosity 2 -bind 127.0.0.1
 
 run-pwn:
-	$(GORUN) $(SRC_FILES) -server $(SVC_DIRNAME)/vuln.exe -verbosity 1
+	$(GORUN) $(SRC_FILES) -server $(SVC_DIRNAME)/vuln.exe -verbosity 2 -bind 127.0.0.1
 
 benchmark:
 	$(GOBENCH)
