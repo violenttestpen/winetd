@@ -1,10 +1,9 @@
 package main
 
 import (
-	"syscall"
 	"unsafe"
 
-	"github.com/violenttestpen/ginetd/internal/syscall/windows"
+	"golang.org/x/sys/windows"
 )
 
 var sidWinIntegrityLevels = map[string]string{
@@ -12,17 +11,17 @@ var sidWinIntegrityLevels = map[string]string{
 	"Low":       `S-1-16-4096`,
 }
 
-func getIntegrityLevelToken(wns string) (syscall.Token, error) {
-	var procToken, token syscall.Token
-	proc, err := syscall.GetCurrentProcess()
+func getIntegrityLevelToken(wns string) (windows.Token, error) {
+	var procToken, token windows.Token
+	proc, err := windows.GetCurrentProcess()
 	if err != nil {
 		return 0, err
 	}
-	defer syscall.CloseHandle(proc)
+	defer windows.CloseHandle(proc)
 
-	var access uint32 = syscall.TOKEN_DUPLICATE | syscall.TOKEN_ADJUST_DEFAULT |
-		syscall.TOKEN_QUERY | syscall.TOKEN_ASSIGN_PRIMARY
-	err = syscall.OpenProcessToken(proc, access, &procToken)
+	var access uint32 = windows.TOKEN_DUPLICATE | windows.TOKEN_ADJUST_DEFAULT |
+		windows.TOKEN_QUERY | windows.TOKEN_ASSIGN_PRIMARY
+	err = windows.OpenProcessToken(proc, access, &procToken)
 	if err != nil {
 		return 0, err
 	}
@@ -34,17 +33,17 @@ func getIntegrityLevelToken(wns string) (syscall.Token, error) {
 		return 0, err
 	}
 
-	sid, err := syscall.StringToSid(wns)
+	sid, err := windows.StringToSid(wns)
 	if err != nil {
 		return 0, err
 	}
 
-	tml := &windows.TOKEN_MANDATORY_LABEL{}
+	tml := &windows.Tokenmandatorylabel{}
 	tml.Label.Attributes = windows.SE_GROUP_INTEGRITY
 	tml.Label.Sid = sid
 
-	err = windows.SetTokenInformation(token, syscall.TokenIntegrityLevel,
-		uintptr(unsafe.Pointer(tml)), tml.Size())
+	err = windows.SetTokenInformation(token, windows.TokenIntegrityLevel,
+		(*byte)(unsafe.Pointer(tml)), tml.Size())
 	if err != nil {
 		token.Close()
 		return 0, err
