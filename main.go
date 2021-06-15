@@ -6,8 +6,11 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"os/exec"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
 const integrityUsage = "Run service with assigned integrity level: %v"
@@ -37,6 +40,10 @@ func init() {
 }
 
 func main() {
+	if _, err := os.Stat(service); err != nil {
+		log.Fatal(err)
+	}
+
 	sid, ok := sidWinIntegrityLevels[integrity]
 	if !ok {
 		log.Fatal("Invalid Integrity Level")
@@ -62,32 +69,55 @@ func beginListener(bind, service, sid string, verbosity int) error {
 		if verbosity >= 1 {
 			log.Printf("New connection from %v\n", conn.RemoteAddr())
 		}
-		go handleConn(service, sid, conn, verbosity)
+		go func() {
+			if err := handleConn(service, sid, conn, verbosity); err != nil {
+				log.Println(err)
+			}
+		}()
 	}
 }
 
-func handleConn(service, sid string, conn net.Conn, verbosity int) {
+func handleConn(service, sid string, conn net.Conn, verbosity int) error {
 	defer conn.Close()
 
 	token, err := getIntegrityLevelToken(sid)
 	if err != nil {
-		log.Println(err)
-		return
+		return err
 	}
-	defer token.Close()
 
 	cmd := exec.Command(service)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Token: token}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Token:         syscall.Token(token),
+		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED,
+	}
 	cmd.Stdout = conn
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		log.Println(err)
-		return
+		return err
 	}
 
-	go func(w io.Writer, r io.Reader) {
+	if err := cmd.Start(); verbosity >= 1 && err != nil {
+		return err
+	}
+	token.Close()
+
+	job, err := NewJobFromProcess(cmd.Process)
+	if err != nil {
+		cmd.Process.Kill()
+		return err
+	}
+	if err := ResumeThread(uint32(cmd.Process.Pid)); err != nil {
+		cmd.Process.Kill()
+		return err
+	}
+
+	go func(job windows.Handle, w io.Writer, r io.Reader) {
 		if _, err := io.Copy(w, r); verbosity >= 2 && err != nil {
+			log.Println(err)
+		}
+
+		if err := TerminateJob(job); err != nil {
 			log.Println(err)
 		}
 
@@ -96,12 +126,7 @@ func handleConn(service, sid string, conn net.Conn, verbosity int) {
 				log.Println(err)
 			}
 		}
-	}(stdin, conn)
-
-	if err := cmd.Start(); verbosity >= 1 && err != nil {
-		log.Println(err)
-		return
-	}
+	}(job, stdin, conn)
 
 	if verbosity >= 1 {
 		log.Printf("Started service \"%s\" with pid %d\n", service, cmd.Process.Pid)
@@ -110,4 +135,6 @@ func handleConn(service, sid string, conn net.Conn, verbosity int) {
 	if err := cmd.Wait(); verbosity >= 1 && err != nil {
 		log.Println(err)
 	}
+
+	return nil
 }
