@@ -6,12 +6,12 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var sidWinIntegrityLevels = map[string]string{
-	"Untrusted": `S-1-16-0`,
-	"Low":       `S-1-16-4096`,
+var sidWinIntegrityLevels = map[string]uint32{
+	"Untrusted": windows.WinUntrustedLabelSid, // `S-1-16-0`
+	"Low":       windows.WinLowLabelSid,       // `S-1-16-4096`
 }
 
-func getIntegrityLevelToken(wns string) (windows.Token, error) {
+func getIntegrityLevelToken(sidType uint32) (windows.Token, error) {
 	var procToken, token windows.Token
 	proc, err := windows.GetCurrentProcess()
 	if err != nil {
@@ -33,7 +33,7 @@ func getIntegrityLevelToken(wns string) (windows.Token, error) {
 		return 0, err
 	}
 
-	sid, err := windows.StringToSid(wns)
+	sid, err := windows.CreateWellKnownSid(windows.WELL_KNOWN_SID_TYPE(sidType))
 	if err != nil {
 		return 0, err
 	}
