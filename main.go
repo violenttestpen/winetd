@@ -8,9 +8,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
-
-	"golang.org/x/sys/windows"
 )
 
 const integrityUsage = "Run service with assigned integrity level: %v"
@@ -49,7 +48,7 @@ func main() {
 		log.Fatal("Invalid Integrity Level")
 	}
 
-	if err := beginListener(fmt.Sprintf("%s:%d", bind, port), service, sid, verbosity); err != nil {
+	if err := beginListener(net.JoinHostPort(bind, strconv.Itoa(port)), service, sid, verbosity); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -86,10 +85,7 @@ func handleConn(service string, sid uint32, conn net.Conn, verbosity int) error 
 	}
 
 	cmd := exec.Command(service)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Token:         syscall.Token(token),
-		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED,
-	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Token: syscall.Token(token)}
 	cmd.Stdout = conn
 
 	stdin, err := cmd.StdinPipe()
@@ -107,10 +103,6 @@ func handleConn(service string, sid uint32, conn net.Conn, verbosity int) error 
 		cmd.Process.Kill()
 		return err
 	}
-	if err := ResumeThread(uint32(cmd.Process.Pid)); err != nil {
-		cmd.Process.Kill()
-		return err
-	}
 
 	go func(w io.Writer, r io.Reader) {
 		if _, err := io.Copy(w, r); verbosity >= 2 && err != nil {
@@ -121,7 +113,7 @@ func handleConn(service string, sid uint32, conn net.Conn, verbosity int) error 
 			log.Println(err)
 		}
 
-		if cmd.Process != nil && !cmd.ProcessState.Exited() {
+		if cmd.Process != nil && (cmd.ProcessState != nil && !cmd.ProcessState.Exited()) {
 			if err := cmd.Process.Kill(); verbosity >= 2 && err != nil {
 				log.Println(err)
 			}
@@ -133,7 +125,7 @@ func handleConn(service string, sid uint32, conn net.Conn, verbosity int) error 
 	}
 
 	if err := cmd.Wait(); verbosity >= 1 && err != nil {
-		log.Println(err)
+		return err
 	}
 
 	return nil
