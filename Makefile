@@ -15,15 +15,11 @@ GOBENCH = $(GOTEST) -bench=. -benchmem
 BUILDFLAGS = -ldflags="-s -w"
 
 SRC_FILES = .
-DIST_DIRNAME = ./dist
-DIST_FILEPATH = $(DIST_DIRNAME)/winetd.exe
+DIST_FILEPATH = ./winetd.exe
 
 all: $(DIST_FILEPATH)
 
-mkdirs:
-	mkdir $(DIST_DIRNAME) | echo
-
-$(DIST_FILEPATH): mkdirs
+$(DIST_FILEPATH):
 	$(GOBUILD) -o $(DIST_FILEPATH) $(BUILDFLAGS) $(SRC_FILES)
 
 services:
@@ -38,5 +34,5 @@ run-pwn:
 benchmark:
 	$(GOBENCH)
 
-clean: $(DIST_DIRNAME)
-	rm -rf $(DIST_DIRNAME)
+clean:
+	rm -rf $(DIST_FILEPATH) 2>/dev/null

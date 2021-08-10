@@ -1,8 +1,9 @@
-package main
+package windows
 
 import (
 	"os"
 	"reflect"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -29,6 +30,32 @@ func NewJobFromProcess(p *os.Process) (windows.Handle, error) {
 	}
 
 	return job, nil
+}
+
+// GetBasicJobLimitInfo retrieves limit and job state information from the job object.
+func GetBasicJobLimitInfo(job windows.Handle) (*windows.JOBOBJECT_BASIC_LIMIT_INFORMATION, error) {
+	info := new(windows.JOBOBJECT_BASIC_LIMIT_INFORMATION)
+	err := windows.QueryInformationJobObject(job,
+		windows.JobObjectBasicLimitInformation,
+		uintptr(unsafe.Pointer(info)),
+		uint32(unsafe.Sizeof(*info)), nil)
+	if err != nil {
+		return nil, err
+	}
+	return info, err
+}
+
+// GetExtendedJobLimitInfo retrieves extended limit and job state information from the job object.
+func GetExtendedJobLimitInfo(job windows.Handle) (*windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION, error) {
+	info := new(windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION)
+	err := windows.QueryInformationJobObject(job,
+		windows.JobObjectExtendedLimitInformation,
+		uintptr(unsafe.Pointer(info)),
+		uint32(unsafe.Sizeof(*info)), nil)
+	if err != nil {
+		return nil, err
+	}
+	return info, err
 }
 
 // TerminateJob terminates the job object and its child processes before closing the handle.
