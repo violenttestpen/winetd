@@ -20,6 +20,8 @@ Usage of winetd.exe:
         Port number to bind to (default 8080)
   -server string
         Path to service to be daemonized
+  -timeout int
+        Timeout in seconds before closing an inactive connection (default 30)
   -verbosity int
         Verbosity mode (0-2)
 ```

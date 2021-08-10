@@ -1,17 +1,23 @@
-package main
+package windows
 
 import (
+	"errors"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-var sidWinIntegrityLevels = map[string]uint32{
+// ErrInvalidIntegrityLevel is used when an integrity level is not found in SidWinIntegrityLevels
+var ErrInvalidIntegrityLevel = errors.New("Invalid Integrity Level")
+
+// SidWinIntegrityLevels contains a mapping of SIDs to integrity levels
+var SidWinIntegrityLevels = map[string]uint32{
 	"Untrusted": windows.WinUntrustedLabelSid, // `S-1-16-0`
 	"Low":       windows.WinLowLabelSid,       // `S-1-16-4096`
 }
 
-func getIntegrityLevelToken(sidType uint32) (windows.Token, error) {
+// GetIntegrityLevelToken returns an access token that represents the given SID
+func GetIntegrityLevelToken(sidType uint32) (windows.Token, error) {
 	var procToken, token windows.Token
 	proc, err := windows.GetCurrentProcess()
 	if err != nil {

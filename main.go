@@ -3,13 +3,15 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
-	"log"
 	"net"
 	"os"
 	"os/exec"
 	"strconv"
 	"syscall"
+	"time"
+
+	"github.com/violenttestpen/winetd/pkg/log"
+	"github.com/violenttestpen/winetd/pkg/windows"
 )
 
 const integrityUsage = "Run service with assigned integrity level: %v"
@@ -18,14 +20,17 @@ var (
 	bind      = "0.0.0.0"
 	port      = 8080
 	integrity = "Untrusted"
+	timeout   = 30
 	verbosity = 0
 
 	service string
 )
 
-func init() {
-	i, integrityLevels := 0, make([]string, len(sidWinIntegrityLevels))
-	for k := range sidWinIntegrityLevels {
+var logger log.Log
+
+func main() {
+	i, integrityLevels := 0, make([]string, len(windows.SidWinIntegrityLevels))
+	for k := range windows.SidWinIntegrityLevels {
 		integrityLevels[i] = k
 		i++
 	}
@@ -33,59 +38,62 @@ func init() {
 	flag.StringVar(&bind, "bind", bind, "Address to bind to")
 	flag.IntVar(&port, "port", port, "Port number to bind to")
 	flag.StringVar(&integrity, "integrity", integrity, fmt.Sprintf(integrityUsage, integrityLevels))
+	flag.IntVar(&timeout, "timeout", timeout, "Timeout in seconds before closing an inactive connection")
 	flag.IntVar(&verbosity, "verbosity", verbosity, "Verbosity mode (0-2)")
 	flag.StringVar(&service, "server", service, "Path to service to be daemonized")
 	flag.Parse()
+
+	logger = log.NewLogger(verbosity)
+	if err := run(net.JoinHostPort(bind, strconv.Itoa(port)), service, integrity, timeout); err != nil {
+		logger.Fatal(err)
+	}
 }
 
-func main() {
-	if _, err := os.Stat(service); err != nil {
-		log.Fatal(err)
-	}
-
-	sid, ok := sidWinIntegrityLevels[integrity]
+func run(bind, service, integrity string, timeout int) error {
+	sid, ok := windows.SidWinIntegrityLevels[integrity]
 	if !ok {
-		log.Fatal("Invalid Integrity Level")
+		return windows.ErrInvalidIntegrityLevel
 	}
 
-	if err := beginListener(net.JoinHostPort(bind, strconv.Itoa(port)), service, sid, verbosity); err != nil {
-		log.Fatal(err)
+	token, err := windows.GetIntegrityLevelToken(sid)
+	if err != nil {
+		return err
 	}
-}
+	defer token.Close()
 
-func beginListener(bind, service string, sid uint32, verbosity int) error {
+	if _, err := os.Stat(service); err != nil {
+		return err
+	}
+
 	server, err := net.Listen("tcp", bind)
 	if err != nil {
 		return err
 	}
 	defer server.Close()
 
+	return doListen(server, func(conn net.Conn) {
+		if err := handleConn(conn, service, syscall.Token(token), timeout); err != nil {
+			logger.Error(err)
+		}
+	})
+}
+
+func doListen(server net.Listener, handler func(net.Conn)) error {
 	for {
 		conn, err := server.Accept()
 		if err != nil {
 			return err
 		}
-		if verbosity >= 1 {
-			log.Printf("New connection from %v\n", conn.RemoteAddr())
-		}
-		go func() {
-			if err := handleConn(service, sid, conn, verbosity); err != nil {
-				log.Println(err)
-			}
-		}()
+		logger.Info("New connection from", conn.RemoteAddr().String())
+		go handler(conn)
 	}
 }
 
-func handleConn(service string, sid uint32, conn net.Conn, verbosity int) error {
+func handleConn(conn net.Conn, service string, token syscall.Token, timeout int) error {
 	defer conn.Close()
 
-	token, err := getIntegrityLevelToken(sid)
-	if err != nil {
-		return err
-	}
-
 	cmd := exec.Command(service)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Token: syscall.Token(token)}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Token: token}
 	cmd.Stdout = conn
 
 	stdin, err := cmd.StdinPipe()
@@ -93,39 +101,48 @@ func handleConn(service string, sid uint32, conn net.Conn, verbosity int) error 
 		return err
 	}
 
-	if err := cmd.Start(); verbosity >= 1 && err != nil {
+	if err := cmd.Start(); err != nil {
 		return err
 	}
-	token.Close()
 
-	job, err := NewJobFromProcess(cmd.Process)
+	job, err := windows.NewJobFromProcess(cmd.Process)
 	if err != nil {
-		cmd.Process.Kill()
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
 		return err
 	}
 
-	go func(w io.Writer, r io.Reader) {
-		if _, err := io.Copy(w, r); verbosity >= 2 && err != nil {
-			log.Println(err)
+	go func() {
+		var buf [1]byte
+		duration := time.Duration(timeout)
+		for {
+			conn.SetReadDeadline(time.Now().Add(duration * time.Second))
+			if _, err := conn.Read(buf[:]); err != nil {
+				logger.Warning(err)
+				break
+			}
+			if _, err := stdin.Write(buf[:]); err != nil {
+				logger.Warning(err)
+				break
+			}
 		}
 
-		if err := TerminateJob(job); err != nil {
-			log.Println(err)
+		if err := windows.TerminateJob(job); err != nil {
+			logger.Error(err)
 		}
 
 		if cmd.Process != nil && (cmd.ProcessState != nil && !cmd.ProcessState.Exited()) {
-			if err := cmd.Process.Kill(); verbosity >= 2 && err != nil {
-				log.Println(err)
+			if err := cmd.Process.Kill(); err != nil {
+				logger.Info(err)
 			}
 		}
-	}(stdin, conn)
+	}()
 
-	if verbosity >= 1 {
-		log.Printf("Started service \"%s\" with pid %d\n", service, cmd.Process.Pid)
-	}
+	logger.Info(fmt.Sprintf("Started service \"%s\" with pid %d", service, cmd.Process.Pid))
 
-	if err := cmd.Wait(); verbosity >= 1 && err != nil {
-		return err
+	if err := cmd.Wait(); err != nil {
+		logger.Warning(err)
 	}
 
 	return nil
