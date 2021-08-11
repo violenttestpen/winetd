@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -38,7 +39,7 @@ func main() {
 	flag.StringVar(&bind, "bind", bind, "Address to bind to")
 	flag.IntVar(&port, "port", port, "Port number to bind to")
 	flag.StringVar(&integrity, "integrity", integrity, fmt.Sprintf(integrityUsage, integrityLevels))
-	flag.IntVar(&timeout, "timeout", timeout, "Timeout in seconds before closing an inactive connection")
+	flag.IntVar(&timeout, "timeout", timeout, "Time in seconds before a connection time out")
 	flag.IntVar(&verbosity, "verbosity", verbosity, "Verbosity mode (0-2)")
 	flag.StringVar(&service, "server", service, "Path to service to be daemonized")
 	flag.Parse()
@@ -114,18 +115,11 @@ func handleConn(conn net.Conn, service string, token syscall.Token, timeout int)
 	}
 
 	go func() {
-		var buf [1]byte
-		duration := time.Duration(timeout)
-		for {
-			conn.SetReadDeadline(time.Now().Add(duration * time.Second))
-			if _, err := conn.Read(buf[:]); err != nil {
-				logger.Warning(err)
-				break
-			}
-			if _, err := stdin.Write(buf[:]); err != nil {
-				logger.Warning(err)
-				break
-			}
+		if timeout > 0 {
+			conn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
+		}
+		if _, err := io.Copy(stdin, conn); err != nil {
+			logger.Warning(err)
 		}
 
 		if err := windows.TerminateJob(job); err != nil {
