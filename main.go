@@ -107,13 +107,19 @@ func run(svc Service, integrity string) error {
 		return err
 	}
 
-	server, err := net.Listen("tcp", net.JoinHostPort(svc.Bind, strconv.Itoa(svc.Port)))
+	server, err := net.Listen(svc.Protocol, net.JoinHostPort(svc.Bind, strconv.Itoa(svc.Port)))
 	if err != nil {
 		return err
 	}
 	defer server.Close()
 
+	var waitMutex sync.Mutex
 	return doListen(server, func(conn net.Conn) {
+		if svc.Wait {
+			waitMutex.Lock()
+			defer waitMutex.Unlock()
+		}
+
 		if err := handleConn(conn, svc, syscall.Token(token)); err != nil {
 			logger.Error(err)
 		}
