@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/violenttestpen/winetd/pkg/log"
 	"github.com/violenttestpen/winetd/pkg/windows"
 )
@@ -18,39 +20,78 @@ import (
 const integrityUsage = "Run service with assigned integrity level: %v"
 
 var (
-	bind      = "0.0.0.0"
-	port      = 8080
 	integrity = "Untrusted"
-	timeout   = 30
 	verbosity = 0
 
-	service string
+	configName      string
+	integrityLevels []string
 )
 
 var logger log.Log
 
-func main() {
-	i, integrityLevels := 0, make([]string, len(windows.SidWinIntegrityLevels))
+func init() {
+	integrityLevels = make([]string, 0, len(windows.SidWinIntegrityLevels))
 	for k := range windows.SidWinIntegrityLevels {
-		integrityLevels[i] = k
-		i++
-	}
-
-	flag.StringVar(&bind, "bind", bind, "Address to bind to")
-	flag.IntVar(&port, "port", port, "Port number to bind to")
-	flag.StringVar(&integrity, "integrity", integrity, fmt.Sprintf(integrityUsage, integrityLevels))
-	flag.IntVar(&timeout, "timeout", timeout, "Time in seconds before a connection time out")
-	flag.IntVar(&verbosity, "verbosity", verbosity, "Verbosity mode (0-2)")
-	flag.StringVar(&service, "server", service, "Path to service to be daemonized")
-	flag.Parse()
-
-	logger = log.NewLogger(verbosity)
-	if err := run(net.JoinHostPort(bind, strconv.Itoa(port)), service, integrity, timeout); err != nil {
-		logger.Fatal(err)
+		integrityLevels = append(integrityLevels, k)
 	}
 }
 
-func run(bind, service, integrity string, timeout int) error {
+func loadConfig(configName string) map[string]Service {
+	viper.SetConfigName(configName)
+	viper.SetConfigType("json")
+	viper.AddConfigPath(".")
+	if err := viper.ReadInConfig(); err != nil {
+		logger.Fatal(err)
+	}
+
+	var services map[string]Service
+	if err := viper.Unmarshal(&services); err != nil {
+		logger.Fatal(err)
+	}
+	return services
+}
+
+func saveDefaultConfig(configName string) {
+	viper.SetConfigFile(configName)
+	viper.SetConfigType("json")
+	viper.AddConfigPath(".")
+	viper.Set("default", defaultService)
+	viper.SafeWriteConfig()
+}
+
+func main() {
+	flag.StringVar(&configName, "c", "config.json", "Path to services config file")
+	flag.StringVar(&integrity, "integrity", integrity, fmt.Sprintf(integrityUsage, integrityLevels))
+	flag.IntVar(&verbosity, "verbosity", verbosity, "Verbosity mode (0-2)")
+	flag.Parse()
+
+	logger = log.NewLogger(verbosity)
+	if flag.Arg(0) == "init" {
+		saveDefaultConfig(configName)
+		logger.Info(configName, "is updated")
+		return
+	}
+	services := loadConfig(configName)
+
+	var wg sync.WaitGroup
+	wg.Add(len(services))
+	for name, service := range services {
+		if service.Disable {
+			continue
+		}
+
+		logger.Info("Running server", name)
+		go func(service Service) {
+			if err := run(service, integrity); err != nil {
+				logger.Error(err)
+			}
+			wg.Done()
+		}(service)
+	}
+	wg.Wait()
+}
+
+func run(svc Service, integrity string) error {
 	sid, ok := windows.SidWinIntegrityLevels[integrity]
 	if !ok {
 		return windows.ErrInvalidIntegrityLevel
@@ -62,18 +103,18 @@ func run(bind, service, integrity string, timeout int) error {
 	}
 	defer token.Close()
 
-	if _, err := os.Stat(service); err != nil {
+	if _, err := os.Stat(svc.Server); err != nil {
 		return err
 	}
 
-	server, err := net.Listen("tcp", bind)
+	server, err := net.Listen("tcp", net.JoinHostPort(svc.Bind, strconv.Itoa(svc.Port)))
 	if err != nil {
 		return err
 	}
 	defer server.Close()
 
 	return doListen(server, func(conn net.Conn) {
-		if err := handleConn(conn, service, syscall.Token(token), timeout); err != nil {
+		if err := handleConn(conn, svc, syscall.Token(token)); err != nil {
 			logger.Error(err)
 		}
 	})
@@ -90,10 +131,10 @@ func doListen(server net.Listener, handler func(net.Conn)) error {
 	}
 }
 
-func handleConn(conn net.Conn, service string, token syscall.Token, timeout int) error {
+func handleConn(conn net.Conn, svc Service, token syscall.Token) error {
 	defer conn.Close()
 
-	cmd := exec.Command(service)
+	cmd := exec.Command(svc.Server)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Token: token}
 	cmd.Stdout = conn
 
@@ -115,8 +156,8 @@ func handleConn(conn net.Conn, service string, token syscall.Token, timeout int)
 	}
 
 	go func() {
-		if timeout > 0 {
-			conn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
+		if svc.Timeout > 0 {
+			conn.SetDeadline(time.Now().Add(time.Duration(svc.Timeout) * time.Second))
 		}
 		if _, err := io.Copy(stdin, conn); err != nil {
 			logger.Warning(err)
@@ -125,15 +166,9 @@ func handleConn(conn net.Conn, service string, token syscall.Token, timeout int)
 		if err := windows.TerminateJob(job); err != nil {
 			logger.Error(err)
 		}
-
-		if cmd.Process != nil && (cmd.ProcessState != nil && !cmd.ProcessState.Exited()) {
-			if err := cmd.Process.Kill(); err != nil {
-				logger.Info(err)
-			}
-		}
 	}()
 
-	logger.Info(fmt.Sprintf("Started service \"%s\" with pid %d", service, cmd.Process.Pid))
+	logger.Info(fmt.Sprintf("Started service \"%s\" with pid %d", svc.Server, cmd.Process.Pid))
 
 	if err := cmd.Wait(); err != nil {
 		logger.Warning(err)

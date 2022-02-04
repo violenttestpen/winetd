@@ -16,3 +16,6 @@
 
 # Distribution directories
 dist/
+
+# Miscellaneous
+config.json

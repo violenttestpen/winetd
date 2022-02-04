@@ -10,7 +10,7 @@ GO = go
 GOBUILD = $(GO) build
 GORUN = $(GO) run
 GOTEST = $(GO) test
-GOBENCH = $(GOTEST) -bench=. -benchmem
+GOBENCH = $(GOTEST) -run=none -bench=. -benchmem
 
 BUILDFLAGS = -ldflags="-s -w"
 
@@ -26,13 +26,13 @@ services:
 	$(CC) -o $(SVC_DIST_FILENAME) $(CCFLAGS) $(SVC_FILENAME)
 
 run:
-	$(GORUN) $(SRC_FILES) -server $(SVC_DIST_FILENAME) -verbosity 2 -bind 127.0.0.1
+	$(GORUN) -race $(SRC_FILES) -server $(SVC_DIST_FILENAME) -verbosity 2 -bind 127.0.0.1
 
 run-pwn:
-	$(GORUN) $(SRC_FILES) -server $(SVC_DIRNAME)/vuln.exe -verbosity 2 -bind 127.0.0.1
+	$(GORUN) -race $(SRC_FILES) -server $(SVC_DIRNAME)/vuln.exe -verbosity 2 -bind 127.0.0.1
 
 benchmark:
-	$(GOBENCH)
+	$(GOBENCH) -v
 
 clean:
 	rm -rf $(DIST_FILEPATH) 2>/dev/null
