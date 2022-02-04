@@ -19,7 +19,8 @@ const (
 var onceListener sync.Once
 
 func simulateListener() {
-	go run(BIND, SERVICE, INTEGRITY, 5)
+	svc := Service{Bind: BIND, Server: SERVICE, Timeout: 5}
+	go run(svc, INTEGRITY)
 }
 
 func simulateConnection(timeout int) error {
@@ -65,14 +66,17 @@ func TestListener(t *testing.T) {
 	var err error
 	assert := assert.New(t)
 
-	err = run(BIND, "invalid.service", INTEGRITY, 0)
+	invalidSvc := Service{Bind: BIND, Server: "invalid.service"}
+	err = run(invalidSvc, INTEGRITY)
 	assert.Error(err)
 
-	err = run(BIND, SERVICE, "NonExistant", 0)
+	nonExistentSvc := Service{Bind: BIND, Server: "NonExistent"}
+	err = run(nonExistentSvc, SERVICE)
 	assert.Error(err)
 
 	go func() {
-		err = run(BIND, SERVICE, INTEGRITY, 5)
+		svc := Service{Bind: BIND, Server: SERVICE, Timeout: 5}
+		err = run(svc, INTEGRITY)
 		assert.Error(err)
 	}()
 	time.Sleep(5 * time.Second)
